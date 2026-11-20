@@ -2953,6 +2953,127 @@ describe("grid_create_order algoClOrdId", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Grid — grid_create_order X-Perp 51000 hint (issue #30)
+// ---------------------------------------------------------------------------
+
+describe("grid_create_order X-Perp 51000 hint", () => {
+  const tools = registerGridTools();
+  const tool = tools.find((t) => t.name === "grid_create_order")!;
+
+  const xperpArgs = {
+    instId: "SUI-USD_UM_XPERP-310404",
+    algoOrdType: "contract_grid",
+    maxPx: "1.10",
+    minPx: "0.95",
+    gridNum: "10",
+    direction: "neutral",
+    lever: "2",
+    sz: "10",
+  };
+
+  /** Mock client whose privatePost rejects with the given business code. */
+  function makeRejectingClient(code: string, msg = "Parameter instId error") {
+    const calls: CapturedCall[] = [];
+    const client = {
+      publicGet: async () => ({}),
+      privateGet: async () => ({}),
+      privatePost: async (endpoint: string, params: Record<string, unknown>) => {
+        calls.push({ method: "POST", endpoint, params });
+        throw new OkxApiError(msg, {
+          code,
+          endpoint: "POST /api/v5/tradingBot/grid/order-algo",
+        });
+      },
+    };
+    return { client, getCalls: () => calls };
+  }
+
+  it("attaches the X-Perp explanation to 51000 on an X-Perp instId", async () => {
+    const { client } = makeRejectingClient("51000");
+    await assert.rejects(
+      () => tool.handler(xperpArgs, makeContext(client)),
+      (err: unknown) => {
+        assert.ok(err instanceof OkxApiError);
+        assert.equal(err.code, "51000");
+        assert.equal(err.message, "Parameter instId error");
+        assert.ok(err.suggestion?.includes("X-Perp"), "hint should mention X-Perp");
+        assert.ok(err.suggestion?.includes("issue #30"), "hint should reference issue #30");
+        assert.ok(err.suggestion?.includes("docs/modules/bot.md"), "hint should point at the docs");
+        return true;
+      },
+    );
+  });
+
+  it("sends the original request body once — no retry, no rewrite", async () => {
+    const { client, getCalls } = makeRejectingClient("51000");
+    await assert.rejects(() => tool.handler(xperpArgs, makeContext(client)));
+    assert.equal(getCalls().length, 1, "no retry or parameter rewrite before hinting");
+    const params = getCalls()[0]!.params;
+    assert.equal(params.instId, "SUI-USD_UM_XPERP-310404");
+    assert.equal(params.algoOrdType, "contract_grid");
+    assert.equal(params.direction, "neutral");
+    assert.deepEqual(params.triggerParams, [
+      { triggerAction: "start", triggerStrategy: "instant" },
+    ]);
+  });
+
+  it("leaves 51000 on USDT-margined -SWAP instruments untouched", async () => {
+    const { client } = makeRejectingClient("51000");
+    await assert.rejects(
+      () => tool.handler({ ...xperpArgs, instId: "BTC-USDT-SWAP" }, makeContext(client)),
+      (err: unknown) => {
+        assert.ok(err instanceof OkxApiError);
+        assert.equal(err.code, "51000");
+        assert.equal(err.message, "Parameter instId error");
+        assert.equal(err.suggestion, undefined, "no X-Perp hint for -SWAP instruments");
+        return true;
+      },
+    );
+  });
+
+  it("leaves 51000 on coin-margined -SWAP instruments untouched", async () => {
+    const { client } = makeRejectingClient("51000");
+    await assert.rejects(
+      () => tool.handler({ ...xperpArgs, instId: "BTC-USD-SWAP" }, makeContext(client)),
+      (err: unknown) =>
+        err instanceof OkxApiError && err.code === "51000" && err.suggestion === undefined,
+    );
+  });
+
+  it("leaves other error codes on X-Perp instIds untouched", async () => {
+    const { client } = makeRejectingClient("51021", "Instrument does not exist");
+    await assert.rejects(
+      () => tool.handler(xperpArgs, makeContext(client)),
+      (err: unknown) => {
+        assert.ok(err instanceof OkxApiError);
+        assert.equal(err.code, "51021");
+        assert.equal(err.suggestion, undefined, "hint only applies to code 51000");
+        return true;
+      },
+    );
+  });
+
+  it("leaves 51000 untouched for spot grids on an X-Perp instId", async () => {
+    const { client } = makeRejectingClient("51000");
+    await assert.rejects(
+      () => tool.handler(
+        {
+          instId: "SUI-USD_UM_XPERP-310404",
+          algoOrdType: "grid",
+          maxPx: "1.10",
+          minPx: "0.95",
+          gridNum: "10",
+          quoteSz: "10",
+        },
+        makeContext(client),
+      ),
+      (err: unknown) =>
+        err instanceof OkxApiError && err.code === "51000" && err.suggestion === undefined,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DCA tools
 // ---------------------------------------------------------------------------
 

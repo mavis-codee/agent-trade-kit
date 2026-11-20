@@ -44,6 +44,44 @@ function normalizeWrite(response: {
   };
 }
 
+/**
+ * X-Perp futures (instType FUTURES, instId like `SUI-USD_UM_XPERP-310404`) are
+ * rejected by POST /api/v5/tradingBot/grid/order-algo with code 51000
+ * "Parameter instId error" even when the request is valid — a direct REST call
+ * fails identically, so the root cause is server-side, not an SDK parameter
+ * problem (issue #30). Rewrites that one case into an actionable suggestion;
+ * message, code, endpoint and traceId are preserved, and every other error
+ * (other codes, non-X-Perp instruments, spot grids) passes through untouched.
+ */
+const XPERP_INSTID_RE = /_UM_XPERP-\d/i;
+
+function withXperpCreateHint(
+  error: unknown,
+  instId: string,
+  algoOrdType: string,
+): unknown {
+  if (
+    algoOrdType !== "contract_grid" ||
+    !(error instanceof OkxApiError) ||
+    error.code !== "51000" ||
+    !XPERP_INSTID_RE.test(instId)
+  ) {
+    return error;
+  }
+  return new OkxApiError(error.message, {
+    code: error.code,
+    endpoint: error.endpoint,
+    traceId: error.traceId,
+    suggestion:
+      "OKX currently rejects creating contract grid bots on X-Perp futures (instId like " +
+      "SUI-USD_UM_XPERP-310404) with 51000 even for valid parameters - direct REST calls to " +
+      "/api/v5/tradingBot/grid/order-algo fail identically (server-side limitation, observed on " +
+      "the EEA site; issue #30). Do not retry or tweak parameters. Create the bot in the OKX app " +
+      "instead; app-created X-Perp bots can still be listed, inspected, amended and stopped via " +
+      "this API. See docs/modules/bot.md.",
+  });
+}
+
 export function registerGridTools(): ToolSpec[] {
   return [
     {
@@ -221,8 +259,9 @@ export function registerGridTools(): ToolSpec[] {
       handler: async (rawArgs, context) => {
         const args = asRecord(rawArgs);
         const algoOrdType = requireString(args, "algoOrdType");
+        const instId = requireString(args, "instId");
         const body: Record<string, unknown> = compactObject({
-          instId: requireString(args, "instId"),
+          instId,
           algoOrdType,
           maxPx: requireString(args, "maxPx"),
           minPx: requireString(args, "minPx"),
@@ -245,12 +284,18 @@ export function registerGridTools(): ToolSpec[] {
           body.triggerParams = [{ triggerAction: "start", triggerStrategy: "instant" }];
           body.basePos = readBoolean(args, "basePos") ?? true;
         }
-        const response = await context.client.privatePost(
-          "/api/v5/tradingBot/grid/order-algo",
-          body,
-          privateRateLimit("grid_create_order", 20),
-        );
-        return normalizeWrite(response);
+        try {
+          const response = await context.client.privatePost(
+            "/api/v5/tradingBot/grid/order-algo",
+            body,
+            privateRateLimit("grid_create_order", 20),
+          );
+          return normalizeWrite(response);
+        } catch (error) {
+          // The request body is never modified or retried; this only attaches an
+          // explanation to the known server-side 51000 rejection on X-Perp.
+          throw withXperpCreateHint(error, instId, algoOrdType);
+        }
       },
     },
     {
