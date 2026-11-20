@@ -53,6 +53,14 @@ When creating a contract grid (`algoOrdType=contract_grid`), the `direction` par
 
 When creating a contract grid, `basePos` (whether to open a base position at creation) defaults to **`true`**. This means long/short direction grids will automatically open a base position. The neutral direction ignores this parameter. Pass `basePos: false` to disable.
 
+### Contract grid — X-Perp futures cannot be created via the API
+
+Creating a contract grid on an **X-Perp** futures instrument (instType `FUTURES`, instId suffix `_UM_XPERP-<date>`, e.g. `SUI-USD_UM_XPERP-310404`) currently fails with error `51000` "Parameter instId error". This is an OKX server-side limitation of the grid creation endpoint — a direct REST `POST /api/v5/tradingBot/grid/order-algo` call with valid parameters returns the same error (observed on the EEA site; issue #30). It is not an SDK or parameter problem, and retrying with different parameters will not help.
+
+- When `grid_create_order` returns `51000` for an X-Perp instId, the error carries a hint explaining this limitation.
+- X-Perp contract grids **can** be created in the OKX app.
+- App-created X-Perp bots remain fully manageable via the API: `grid_get_orders`, `grid_get_order_details`, `grid_get_positions`, `grid_amend_order` and `grid_stop_order` all work on X-Perp instruments.
+
 ## DCA tools (bot.dca)
 
 | Tool | Description |
@@ -282,6 +290,14 @@ okx bot recurring add-investment --algoId <id> --amount 20
 ### 合约网格 — `basePos` 默认值
 
 创建合约网格时，`basePos`（是否在创建时开底仓）默认为 **`true`**。即做多/做空方向的网格会自动开底仓。中性方向忽略此参数。传 `basePos: false` 可禁用。
+
+### 合约网格 — X-Perp 合约暂不能通过 API 创建
+
+在 **X-Perp** 合约（instType `FUTURES`，instId 后缀 `_UM_XPERP-<日期>`，如 `SUI-USD_UM_XPERP-310404`）上创建合约网格，目前会返回错误 `51000` "Parameter instId error"。这是 OKX 服务端对网格创建接口的限制——参数合法时直接 REST 调用 `POST /api/v5/tradingBot/grid/order-algo` 也会返回同样的错误（在 EEA 站观测到；issue #30），并非 SDK 或参数问题，调整参数重试也无法绕过。
+
+- 当 `grid_create_order` 对 X-Perp instId 返回 `51000` 时，错误信息会附带说明此限制的提示。
+- X-Perp 合约网格**可以**在 OKX App 内创建。
+- App 创建的 X-Perp 机器人仍可通过 API 完整管理：`grid_get_orders`、`grid_get_order_details`、`grid_get_positions`、`grid_amend_order`、`grid_stop_order` 在 X-Perp 上均正常可用。
 
 ## DCA 工具 (bot.dca)
 
